@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use dotenvy::dotenv;
 
-// Вызов OpenAI Chat Completions для генерации загадки
 #[derive(Serialize)]
 struct ChatMessage {
     role: String,
