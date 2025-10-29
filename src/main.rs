@@ -88,7 +88,6 @@ async fn check_answer_llm(api_key: &str, riddle_text: &str, user_answer: &str) -
         .map(|c| c.message.content.trim().to_string())
         .ok_or("Empty choices from OpenAI")?;
 
-    // Пытаемся распарсить JSON
     let parsed: AnswerCheckJson = serde_json::from_str(&content)?;
     Ok((parsed.correct, parsed.feedback))
 }
@@ -114,20 +113,19 @@ impl AppState {
             current_question: Arc::new(Mutex::new(None)),
             api_key,
             bot,
-            enable_llm: Arc::new(Mutex::new(true)), // LLM включен по умолчанию
+            enable_llm: Arc::new(Mutex::new(true)), 
             last_request: Arc::new(Mutex::new(std::time::Instant::now())),
         }
     }
 
     async fn wait_for_rate_limit(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3); // Минимальный интервал между запросами
-        const MAX_RETRIES: u32 = 3; // Максимальное количество попыток
+        const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+        const MAX_RETRIES: u32 = 3; 
 
         let mut retries = 0;
         loop {
             let now = std::time::Instant::now();
 
-            // Получаем момент последнего запроса и сразу отпускаем мьютекс
             let last_instant = {
                 let last_req = self.last_request.lock().unwrap();
                 *last_req
@@ -136,7 +134,6 @@ impl AppState {
             let elapsed = now.duration_since(last_instant);
 
             if elapsed >= MIN_INTERVAL {
-                // Обновляем время последнего запроса
                 let mut last_req = self.last_request.lock().unwrap();
                 *last_req = now;
                 return Ok(());
@@ -147,7 +144,6 @@ impl AppState {
                 return Err("Превышено количество попыток запроса к API".into());
             }
 
-            // Ждем оставшееся время + небольшой запас
             let wait_time = MIN_INTERVAL - elapsed + std::time::Duration::from_millis(100);
             tokio::time::sleep(wait_time).await;
         }
@@ -162,18 +158,18 @@ impl AppState {
 
 impl AppState {
     async fn generate_riddle(&self) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
-        // Проверяем, включен ли LLM
+        
         let llm_enabled = {
             let llm = self.enable_llm.lock().unwrap();
             *llm
         };
 
-        // Если LLM выключен, возвращаем ошибку
+       
         if !llm_enabled {
             return Err("LLM generation is disabled".into());
         }
 
-        // Проверяем, не сгенерирована ли уже загадка и собираем данные для уведомлений
+       
         let (question_exists, subscribers_to_notify) = {
             let q = self.current_question.lock().unwrap();
             if let Some((question, _)) = q.as_ref() {
@@ -184,7 +180,7 @@ impl AppState {
             }
         };
 
-        // Если загадка существует, отправляем уведомления и возвращаем ошибку
+       
         if question_exists {
             let (question, subscribers) = subscribers_to_notify;
             for chat_id in &subscribers {
@@ -197,7 +193,6 @@ impl AppState {
         let url = "https://api.openai.com/v1/chat/completions";
 
         if let Some(key) = &self.api_key {
-            // Сообщения по требованиям пользователя
             let body = ChatRequestBody {
                 model: "gpt-5".to_string(),
                 messages: vec![
@@ -212,7 +207,6 @@ impl AppState {
                 ],
             };
 
-            // Ждем, если нужно, перед отправкой запроса
             self.wait_for_rate_limit().await?;
             
             let resp = client
@@ -234,11 +228,9 @@ impl AppState {
                 .map(|c| c.message.content.trim().to_string())
                 .ok_or("Empty choices from OpenAI")?;
 
-            // Ожидаем JSON с полями question/answer
+            
             let parsed: RiddleJson = serde_json::from_str(&content)
                 .or_else(|_| {
-                    // Фоллбек: попытаться вытащить через примитивный парсинг
-                    // Формат: Question: ...\nAnswer: ...
                     let lower = content.to_lowercase();
                     if let (Some(qi), Some(ai)) = (lower.find("question"), lower.find("answer")) {
                         let q = content[qi..].splitn(2, '\n').next().unwrap_or("");
@@ -266,7 +258,7 @@ impl AppState {
 async fn main() {
     dotenv().ok();
 
-    // Получаем OPENAI_API_KEY как Option<String> (None если не установлено)
+    
     let api_key = std::env::var("OPENAI_API_KEY").ok();
     let token = std::env::var("TOKEN").unwrap_or_else(|_| "Unknown".to_string());
 
@@ -275,7 +267,6 @@ async fn main() {
     pretty_env_logger::init();
     log::info!("Запускаем бота...");
     
-    // Список подписчиков (chat_id)
     let state = AppState::new(api_key, bot.clone());
     
     let handler = move |bot: Bot, msg: Message| {
@@ -288,7 +279,6 @@ async fn main() {
                     let status = if enabled { "включена" } else { "отключена" };
                     bot.send_message(msg.chat.id, format!("Генерация через LLM {}", status)).await?;
                 } else if text.starts_with("/start") {
-                    // Добавляем пользователя в список подписчиков
                     let chat_id = msg.chat.id;
                     {
                         let mut subs = state.subscribers.lock().unwrap();
@@ -299,7 +289,6 @@ async fn main() {
                     }
                     bot.send_message(chat_id, "привет пиши /quiz").await?;
                 } else if text.starts_with("/quiz") {
-                    // Не даём стартовать, если квиз уже идёт (есть вопрос и нет победителя)
                     let (quiz_running, current_q) = {
                         let q = state.current_question.lock().unwrap();
                         let w = state.winner.lock().unwrap();
@@ -308,16 +297,12 @@ async fn main() {
                         (is_running, current_question)
                     };
                     if quiz_running {
-                        // Вместо предупреждения — отправляем текущий вопрос пользователю (если он есть)
-
                         if let Some(q_text) = current_q {
                             bot.send_message(msg.chat.id, format!("Текущий вопрос: {}", q_text)).await?;
                         } else {
-                            // На всякий случай — если вопрос по какой-то причине отсутствует, вернуть старое сообщение
                             bot.send_message(msg.chat.id, "Квиз уже запущен. Дождитесь завершения (будет объявлен победитель). ").await?;
                         }
                     } else {
-                        // Попытка сгенерировать вопрос через LLM; при любой ошибке используем локальный запасной вопрос
                         let (question, correct_answer) = match state.generate_riddle().await {
                             Ok(pair) => pair,
                             Err(e) => {
@@ -326,19 +311,16 @@ async fn main() {
                             }
                         };
                         
-                        // Сохраняем текущий вопрос и ответ
                         {
                             let mut q = state.current_question.lock().unwrap();
                             *q = Some((question.clone(), correct_answer.clone()));
                         }
                         
-                        // Задаём вопрос всем
                         let subs_copy = {
                             let subs = state.subscribers.lock().unwrap();
                             subs.clone()
                         };
                         
-                        // Сбрасываем ответы и победителя
                         {
                             let mut ans = state.answers.lock().unwrap();
                             ans.clear();
@@ -356,7 +338,6 @@ async fn main() {
                         bot.send_message(msg.chat.id, "Викторина началась! Вопрос отправлен всем.").await?;
                     }
                 } else if text.starts_with("/broadcast") {
-                    // Рассылка всем подписчикам
                     let subs_copy = {
                         let subs = state.subscribers.lock().unwrap();
                         subs.clone()
@@ -373,7 +354,6 @@ async fn main() {
                     }
                     bot.send_message(msg.chat.id, format!("Сообщение отправлено {} подписчикам", subscribers_count)).await?;
                 } else {
-                    // Пользователь отправил ответ на вопрос
                     let chat_id = msg.chat.id;
                     let user_answer = text.trim();
                     
@@ -381,7 +361,6 @@ async fn main() {
                         .and_then(|u| u.username.clone().or_else(|| Some(u.first_name.clone())))
                         .unwrap_or_else(|| format!("Unknown_{:?}", chat_id));
                     
-                    // Проверяем, есть ли уже победитель и текущий вопрос
                     let (already_winner, quiz_question, api_key) = {
                         let w = state.winner.lock().unwrap();
                         let q = state.current_question.lock().unwrap();
@@ -391,23 +370,20 @@ async fn main() {
                         (has_winner, question_copy, api_key)
                     };
                     
-                    // Проверяем ответ через OpenAI (если нужно)
+                   
                     let (is_correct, feedback) = if already_winner {
                         (false, "".to_string())
                     } else if let Some((question, correct_answer)) = quiz_question.as_ref() {
-                        // Используем скопированный из состояния api_key (из avoid holding lock)
                         if let Some(key) = api_key {
                             match check_answer_llm(&key, question, user_answer).await {
                                 Ok((is_correct, feedback)) => (is_correct, feedback),
                                 Err(e) => {
                                     log::error!("Answer check failed: {:?}", e);
-                                    // Фоллбек на простое сравнение
                                     let simple_correct = user_answer.eq_ignore_ascii_case(correct_answer);
                                     (simple_correct, "".to_string())
                                 }
                             }
                         } else {
-                            // Нет API ключа - простой фоллбек
                             let simple_correct = user_answer.eq_ignore_ascii_case(correct_answer);
                             (simple_correct, "".to_string())
                         }
@@ -417,14 +393,12 @@ async fn main() {
                     
                     if !already_winner {
                         if is_correct {
-                            // Найден победитель!
                             {
                                 let mut w = state.winner.lock().unwrap();
                                 *w = Some(username.clone());
                             }
                             log::info!("Победитель найден: {}", username);
                             
-                            // Отправляем всем о победителе
                             let subs_copy = {
                                 let subs = state.subscribers.lock().unwrap();
                                 subs.clone()
@@ -439,7 +413,6 @@ async fn main() {
                             
                             bot.send_message(chat_id, "✅ Поздравляем! Вы победитель!").await?;
                         } else {
-                            // Сохраняем ответ
                             {
                                 let mut ans = state.answers.lock().unwrap();
                                 ans.insert(chat_id, user_answer.to_string());
